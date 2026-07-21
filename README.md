@@ -1,49 +1,43 @@
-# Data Operations & Backup Platform
+<h1 align="center">Data Operations & Backup Platform</h1>
 
-![PHP 8.3](https://img.shields.io/badge/PHP-8.3-777BB4?logo=php&logoColor=white)
-![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
-![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
-![License: MIT](https://img.shields.io/badge/License-MIT-1f7a4e.svg)
+<p align="center">
+  <strong>Backups you can schedule, see, verify, and restore.</strong>
+</p>
 
-A containerized control plane for scheduling, observing, verifying, and restoring incremental filesystem backups. The project separates the authenticated PHP/Apache dashboard from the PostgreSQL state store, scheduler, and least-privilege `rsync` worker.
+<p align="center">
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&amp;logoColor=white">
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&amp;logoColor=white">
+  <img alt="PHP" src="https://img.shields.io/badge/PHP-8.3-777BB4?logo=php&amp;logoColor=white">
+  <img alt="rsync" src="https://img.shields.io/badge/Backup-rsync-23865F">
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-1F704A">
+</p>
 
-> Portfolio project by **Bertrand Rusanganwa** · Computer Science, infrastructure, data systems, and secure software engineering.
+![Data operations dashboard](docs/images/dashboard-preview.svg)
 
-![Operations dashboard preview](docs/images/dashboard-preview.svg)
+A containerized platform for running data-processing jobs and managing incremental backups from one authenticated dashboard. PostgreSQL tracks every job, run, recovery point, and audit event while a separate worker handles filesystem access.
 
-## Why this project exists
+## What it does
 
-Backup scripts are easy to start and hard to operate reliably. This platform demonstrates the surrounding engineering that makes a backup workflow repeatable: authenticated control, atomic job claiming, immutable audit events, safe path boundaries, versioned recovery points, integrity evidence, retention, and a documented restore drill.
+- schedules and queues backup jobs;
+- creates incremental `rsync` snapshots;
+- verifies recovery points with SHA-256 manifests;
+- restores snapshots into a protected recovery area;
+- processes and normalizes CSV data on a schedule;
+- records run history and append-only audit events.
 
-### What it demonstrates
+## The stack
 
-- **Infrastructure:** isolated Docker services for the dashboard, database, processor, scheduler, and backup worker.
-- **Data processing:** scheduled CSV normalization and status aggregation with atomic output publication and run evidence.
-- **Data operations:** PostgreSQL-backed job state, execution history, indexes, and transactional queueing.
-- **Backup engineering:** incremental `rsync` snapshots using hard links, atomic publish, SHA-256 manifests, and retention.
-- **Secure application design:** password hashing, CSRF tokens, throttled login attempts, parameterized SQL, secure cookie controls, and HTTP security headers.
-- **Operations:** health endpoint, worker logs, cron/systemd examples, recovery runbook, tests, and GitHub Actions CI.
+| Service | Role |
+|---|---|
+| **PHP + Apache** | Authenticated operations dashboard |
+| **PostgreSQL** | Jobs, runs, users, schedules, and audit state |
+| **Scheduler** | Queues jobs when they become due |
+| **Processor** | Normalizes source data and publishes outputs atomically |
+| **Backup worker** | Claims jobs, runs `rsync`, verifies, and restores |
 
-## Architecture
-
-```mermaid
-flowchart TD
-    Operator["Operator"] -->|HTTPS / session| Web["PHP + Apache dashboard"]
-    Web -->|jobs, runs, audit| DB[("PostgreSQL")]
-    Scheduler["Scheduler"] -->|queue due jobs| DB
-    Processor["Data processor"] -->|run evidence| DB
-    Input["Raw exports"] -->|normalize + summarize| Processor
-    Processor -->|atomic publish| Source
-    Worker["rsync worker"] -->|claim + report| DB
-    Worker -->|read only| Source["Source data"]
-    Worker -->|versioned snapshots| Store["Recovery store"]
-```
-
-The UI never invokes `rsync` directly. It inserts a queued run in a transaction; the worker atomically claims one run with `FOR UPDATE SKIP LOCKED`. This prevents duplicate processing and keeps the web process away from filesystem privileges.
+The dashboard never runs `rsync` directly. It queues work in PostgreSQL, and the worker claims one run atomically before touching the filesystem.
 
 ## Quick start
-
-Requirements: Docker Engine 24+ with Compose v2 and GNU Make (optional).
 
 ```bash
 git clone https://github.com/bertrandrusa/data-operations-backup-platform.git
@@ -51,54 +45,45 @@ cd data-operations-backup-platform
 cp .env.example .env
 ```
 
-Change `POSTGRES_PASSWORD`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` in `.env`, then start the stack:
+On Windows PowerShell, use `Copy-Item .env.example .env`.
+
+Set `POSTGRES_PASSWORD`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` in `.env`, then start everything:
 
 ```bash
 docker compose up --build -d
 docker compose ps
 ```
 
-Open [http://localhost:8080](http://localhost:8080) and sign in with the administrator credentials from `.env`. The processor normalizes the included CSV export and publishes a status summary. The sample backup job protects those outputs once per hour. Click **Run now** to queue an immediate snapshot.
+Open [http://localhost:8080](http://localhost:8080), sign in, and select **Run now** to queue the sample backup job.
 
-> The first administrator is created only when that email does not exist. Changing `ADMIN_PASSWORD` later does not overwrite an existing password.
+## Backup and recovery
 
-## Operate the platform
-
-Queue the sample job from the command line:
+Queue a backup and follow the worker:
 
 ```bash
 make backup
 docker compose logs -f worker
 ```
 
-List recovery points:
-
-```bash
-docker compose exec worker sh -c \
-  'find /data/backups/11111111-1111-4111-8111-111111111111 -maxdepth 1 -type d -name "20*" -printf "%f\n" | sort'
-```
-
-Verify a snapshot against the SHA-256 manifest saved with its successful run:
+Verify a recovery point:
 
 ```bash
 docker compose exec worker /opt/dataops/verify.sh \
   11111111-1111-4111-8111-111111111111 \
-  2026-07-21T120000Z-acde1234
+  <snapshot-id>
 ```
 
-Run an isolated recovery drill:
+Restore it into an isolated directory:
 
 ```bash
 make restore \
-  SNAPSHOT=2026-07-21T120000Z-acde1234 \
-  RESTORE_TO=/data/restored/quarterly-drill
+  SNAPSHOT=<snapshot-id> \
+  RESTORE_TO=/data/restored/recovery-drill
 ```
 
-The restore command verifies the manifest first, requires a destination below `/data/restored`, and refuses a non-empty destination. See the complete [operations and recovery runbook](docs/OPERATIONS.md).
+The restore workflow verifies the manifest first and refuses destinations outside `/data/restored` or directories that already contain files.
 
-## Snapshot strategy
-
-Each successful run creates a directory such as:
+## Incremental snapshot design
 
 ```text
 /data/backups/<job-id>/
@@ -107,45 +92,18 @@ Each successful run creates a directory such as:
 └── latest -> 2026-07-21T130000Z-bcde2345
 ```
 
-`rsync --link-dest` hard-links unchanged files to the previous recovery point. Every snapshot still looks complete to an operator, but unchanged content does not consume duplicate blocks. A run is first written to a hidden partial directory and renamed only after transfer and hashing succeed.
+Unchanged files are hard-linked from the previous snapshot with `rsync --link-dest`. Each recovery point looks complete without storing duplicate blocks. Partial runs stay hidden and are published only after transfer and hashing succeed.
 
-## Data model
+## Safety built in
 
-| Table | Purpose |
-|---|---|
-| `users` | Operator identities, password hashes, roles, and sign-in metadata |
-| `backup_jobs` | Source/target paths, schedule, retention, and next-run state |
-| `backup_runs` | Queue state, snapshot identity, sizes, file counts, and manifest hashes |
-| `pipeline_runs` | Processing status, record counts, output path, and dataset hash |
-| `audit_logs` | Append-only operator and worker activity |
-| `login_attempts` | Inputs for short-window authentication throttling |
+- source data is mounted read-only;
+- backup and restore paths are restricted to configured roots;
+- PostgreSQL is not exposed to the host network;
+- containers use `no-new-privileges`;
+- the worker runs as an unprivileged user;
+- secrets and generated backups remain outside Git.
 
-## Security boundaries
-
-- Source data is mounted read-only into the worker.
-- Job paths must remain under configured source and target roots in both PHP and shell validation layers.
-- Restore paths must be children of a separate recovery-drill root.
-- Audit rows are protected by a database trigger that rejects updates and deletes.
-- PostgreSQL is not published to the host network.
-- Containers enable `no-new-privileges`; the worker runs as an unprivileged user.
-- Secrets belong in `.env` or a production secret manager and are excluded from Git.
-
-This is a production-minded demonstration, not a substitute for an organization-specific disaster-recovery design. Production use should add TLS termination, external secrets, encrypted off-site replication, alerting, SSO/RBAC enforcement, database backups, and tested RPO/RTO targets. See [SECURITY.md](SECURITY.md) and [the architecture notes](docs/ARCHITECTURE.md).
-
-## Repository map
-
-```text
-app/                 PHP application, templates, and public assets
-database/migrations/ PostgreSQL schema and seed job
-docker/              Apache, application, and worker images
-worker/              Scheduler, queue, backup, verify, and restore scripts
-pipeline/            Scheduled CSV normalization and atomic output publication
-docs/                Architecture, operations, cron, and systemd examples
-tests/               Dependency-free PHP unit tests
-.github/workflows/   Syntax, tests, shell checks, Compose validation, and builds
-```
-
-## Development checks
+## Test it
 
 ```bash
 make test
@@ -153,10 +111,13 @@ docker compose config --quiet
 docker compose build
 ```
 
-The CI workflow runs PHP syntax checks and tests, ShellCheck, Compose validation, and container builds on every pull request.
+## Explore
 
-## License
+- [Architecture and trust boundaries](docs/ARCHITECTURE.md)
+- [Operations and recovery runbook](docs/OPERATIONS.md)
+- [Security guidance](SECURITY.md)
+- [Repository contribution guide](CONTRIBUTING.md)
+
+Built by **Bertrand Rusanganwa** as a data operations, infrastructure, and recovery engineering portfolio project.
 
 Released under the [MIT License](LICENSE).
-
-Ready to publish? Follow the short [GitHub publishing guide](PUBLISHING.md).
