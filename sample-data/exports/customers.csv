@@ -1,0 +1,4 @@
+customer_id,status,region
+1001,active,midwest
+1002,active,south
+1003,review,west

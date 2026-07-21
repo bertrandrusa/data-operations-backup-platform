@@ -1,0 +1,113 @@
+name: data-operations-platform
+
+services:
+  database:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dataops}
+      POSTGRES_USER: ${POSTGRES_USER:-dataops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-this-database-password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    environment: &app-environment
+      APP_ENV: ${APP_ENV:-development}
+      APP_URL: ${APP_URL:-http://localhost:8080}
+      APP_SESSION_NAME: ${APP_SESSION_NAME:-dataops_session}
+      DATABASE_URL: ${DATABASE_URL:-pgsql:host=database;port=5432;dbname=dataops}
+      POSTGRES_USER: ${POSTGRES_USER:-dataops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-this-database-password}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-ChangeMe-Now-2026!}
+      BACKUP_SOURCE_ROOT: ${BACKUP_SOURCE_ROOT:-/data/source}
+      BACKUP_TARGET_ROOT: ${BACKUP_TARGET_ROOT:-/data/backups}
+    ports:
+      - "8080:80"
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    environment:
+      <<: *app-environment
+      WORKER_INTERVAL_SECONDS: ${WORKER_INTERVAL_SECONDS:-5}
+    command: ["/opt/dataops/process-loop.sh"]
+    volumes:
+      - processed-data:/data/source:ro
+      - backup-data:/data/backups
+      - restore-data:/data/restored
+    depends_on:
+      web:
+        condition: service_healthy
+      processor:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  processor:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    environment:
+      <<: *app-environment
+      PROCESSOR_INTERVAL_SECONDS: ${PROCESSOR_INTERVAL_SECONDS:-300}
+    command: ["/opt/pipeline/process-loop.sh"]
+    volumes:
+      - ./sample-data:/data/input:ro
+      - processed-data:/data/source
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "test", "-f", "/data/source/.ready"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    environment:
+      <<: *app-environment
+      SCHEDULER_INTERVAL_SECONDS: ${SCHEDULER_INTERVAL_SECONDS:-30}
+    command: ["/opt/dataops/scheduler-loop.sh"]
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  postgres-data:
+  backup-data:
+  restore-data:
+  processed-data:

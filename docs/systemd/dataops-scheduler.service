@@ -1,0 +1,14 @@
+[Unit]
+Description=Queue the Data Operations backup job
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/data-operations-backup-platform
+ExecStart=/usr/bin/docker compose exec -T worker /opt/dataops/queue-backup.sh 11111111-1111-4111-8111-111111111111 scheduled
+
+# Apply local hardening appropriate to the Docker installation and host policy.
+NoNewPrivileges=true
+PrivateTmp=true
+

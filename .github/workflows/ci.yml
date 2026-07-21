@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+      - name: Validate PHP syntax
+        run: find app tests -name '*.php' -type f -print0 | xargs -0 -n1 php -l
+      - name: Run unit tests
+        run: php tests/run.php
+      - name: Check shell scripts
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: .
+      - name: Validate Compose configuration
+        run: cp .env.example .env && docker compose config --quiet
+      - name: Build containers
+        run: docker compose build

@@ -1,0 +1,5 @@
+Data Operations Daily Summary
+Status: healthy
+Records processed: 12,840
+Exceptions requiring review: 3
+

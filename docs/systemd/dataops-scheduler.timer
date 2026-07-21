@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Data Operations backup schedule hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=120
+Unit=dataops-scheduler.service
+
+[Install]
+WantedBy=timers.target
